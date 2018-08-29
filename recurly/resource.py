@@ -102,6 +102,8 @@ class Page(list):
                     pass
                 raise StopIteration
 
+
+
     def next_page(self):
         """Return the next `Page` after this one in the result sequence
         it's from.
@@ -157,7 +159,7 @@ class Page(list):
 
         """
         page = cls(value)
-        links = parse_link_value(resp.getheader('Link'))
+        links = parse_link_value(resp.headers.get('Link'))
         for url, data in six.iteritems(links):
             if data.get('rel') == 'start':
                 page.start_url = url
@@ -261,15 +263,6 @@ class Resource(object):
 
         return resp
 
-    @classmethod
-    def headers_as_dict(cls, resp):
-        """Turns an array of response headers into a dictionary"""
-        if six.PY2:
-            pairs = [header.split(':', 1) for header in resp.msg.headers]
-            return dict([(k, v.strip()) for k, v in pairs])
-        else:
-            return dict([(k, v.strip()) for k, v in resp.msg._headers])
-
     def as_log_output(self):
         """Returns an XML string containing a serialization of this
         instance suitable for logging.
@@ -331,7 +324,7 @@ class Resource(object):
         if response.status_code != 200:
             cls.raise_http_error(response)
 
-        # assert response.getheader('Content-Type').startswith('application/xml')
+        # assert response.headers.get('Content-Type').startswith('application/xml')
 
         response_xml = response.content
         logging.getLogger('recurly.http.response').debug(response_xml)
@@ -492,16 +485,16 @@ class Resource(object):
             body = args[0] if args else None
             response = self.http_request(full_url, method, body)
 
-            if response.status == 200:
-                response_xml = response.read()
+            if response.status_code == 200:
+                response_xml = response.content
                 logging.getLogger('recurly.http.response').debug(response_xml)
                 return self.update_from_element(ElementTree.fromstring(response_xml))
-            elif response.status == 201:
-                response_xml = response.read()
+            elif response.status_code == 201:
+                response_xml = response.content
                 logging.getLogger('recurly.http.response').debug(response_xml)
                 elem = ElementTree.fromstring(response_xml)
                 return self.value_for_element(elem)
-            elif response.status == 204:
+            elif response.status_code == 204:
                 pass
             elif extra_handler is not None:
                 return extra_handler(response)
@@ -613,45 +606,13 @@ class Resource(object):
         url = recurly.base_uri() + self.collection_path
         return self.post(url)
 
-    def put(self, url):
-        """Sends this `Resource` instance to the service with a
-        ``PUT`` request to the given URL."""
-        response = self.http_request(url, 'PUT', self, {'Content-Type': 'application/xml; charset=utf-8'})
-        if response.status != 200:
-            self.raise_http_error(response)
-
-        response_xml = response.read()
-        logging.getLogger('recurly.http.response').debug(response_xml)
-        self.update_from_element(ElementTree.fromstring(response_xml))
-
-    def post(self, url, body=None):
-        """Sends this `Resource` instance to the service with a
-        ``POST`` request to the given URL. Takes an optional body"""
-        response = self.http_request(url, 'POST', body or self, {'Content-Type': 'application/xml; charset=utf-8'})
-        if response.status not in (200, 201, 204):
-            self.raise_http_error(response)
-
-        self._url = response.getheader('Location')
-
-        if response.status in (200, 201):
-            response_xml = response.read()
-            logging.getLogger('recurly.http.response').debug(response_xml)
-            self.update_from_element(ElementTree.fromstring(response_xml))
-
-    def delete(self):
-        """Submits a deletion request for this `Resource` instance as
-        a ``DELETE`` request to its URL."""
-        response = self.http_request(self._url, 'DELETE')
-        if response.status != 204:
-            self.raise_http_error(response)
-
     @classmethod
     def raise_http_error(cls, response):
         """Raise a `ResponseError` of the appropriate subclass in
         reaction to the given `http_client.HTTPResponse`."""
-        response_xml = response.read()
+        response_xml = response.content
         logging.getLogger('recurly.http.response').debug(response_xml)
-        exc_class = recurly.errors.error_class_for_http_status(response.status)
+        exc_class = recurly.errors.error_class_for_http_status(response.status_code)
         raise exc_class(response_xml)
 
     def to_element(self, root_name=None):
