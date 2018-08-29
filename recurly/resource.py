@@ -6,6 +6,7 @@ import ssl
 from xml.etree import ElementTree
 
 import iso8601
+import requests
 import six
 
 import recurly
@@ -236,32 +237,6 @@ class Resource(object):
         if recurly.API_KEY is None:
             raise recurly.UnauthorizedError('recurly.API_KEY not set')
 
-        url_parts = urlparse(url)
-        if not any(url_parts.netloc.endswith(d) for d in recurly.VALID_DOMAINS):
-            # TODO Exception class used for clean backport, change to
-            # ConfigurationError
-            raise Exception('Only a recurly domain may be called')
-
-        is_non_ascii = lambda s: any(ord(c) >= 128 for c in s)
-
-        if is_non_ascii(recurly.API_KEY) or is_non_ascii(recurly.SUBDOMAIN):
-            raise recurly.ConfigurationError("""Setting API_KEY or SUBDOMAIN to
-                    unicode strings may cause problems. Please use strings.
-                    Issue described here:
-                    https://gist.github.com/maximehardy/d3a0a6427d2b6791b3dc""")
-
-        urlparts = urlsplit(url)
-        connection_options = {}
-        if recurly.SOCKET_TIMEOUT_SECONDS:
-            connection_options['timeout'] = recurly.SOCKET_TIMEOUT_SECONDS
-        if urlparts.scheme != 'https':
-            connection = http_client.HTTPConnection(urlparts.netloc, **connection_options)
-        elif recurly.CA_CERTS_FILE is None:
-            connection = http_client.HTTPSConnection(urlparts.netloc, **connection_options)
-        else:
-            connection_options['context'] = ssl.create_default_context(cafile=recurly.CA_CERTS_FILE)
-            connection = http_client.HTTPSConnection(urlparts.netloc, **connection_options)
-
         headers = {} if headers is None else dict(headers)
         headers.setdefault('Accept', 'application/xml')
         headers.update({
@@ -270,35 +245,17 @@ class Resource(object):
         headers['X-Api-Version'] = recurly.api_version()
         headers['Authorization'] = 'Basic %s' % base64.b64encode(six.b('%s:' % recurly.API_KEY)).decode()
 
-        log = logging.getLogger('recurly.http.request')
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug("%s %s HTTP/1.1", method, url)
-            for header, value in six.iteritems(headers):
-                if header == 'Authorization':
-                    value = '<redacted>'
-                log.debug("%s: %s", header, value)
-            log.debug('')
-            if method in ('POST', 'PUT') and body is not None:
-                if isinstance(body, Resource):
-                    log.debug(body.as_log_output())
-                else:
-                    log.debug(body)
-
         if isinstance(body, Resource):
             body = ElementTree.tostring(body.to_element(), encoding='UTF-8')
             headers['Content-Type'] = 'application/xml; charset=utf-8'
         if method in ('POST', 'PUT') and body is None:
             headers['Content-Length'] = '0'
-        connection.request(method, url, body, headers)
-        resp = connection.getresponse()
 
-        resp_headers = cls.headers_as_dict(resp)
+        print(body)
+        resp = requests.get(url, headers=headers)
+        print(resp)
 
-        log = logging.getLogger('recurly.http.response')
-        if log.isEnabledFor(logging.DEBUG):
-            log.debug("HTTP/1.1 %d %s", resp.status, resp.reason)
-            log.debug(resp_headers)
-            log.debug('')
+        resp_headers = resp.headers
 
         recurly.cache_rate_limit_headers(resp_headers)
 
@@ -360,7 +317,7 @@ class Resource(object):
     def headers_for_url(cls, url):
         """Return the headers only for the given URL as a dict"""
         response = cls.http_request(url, method='HEAD')
-        if response.status != 200:
+        if response.status_code != 200:
             cls.raise_http_error(response)
 
         return Resource.headers_as_dict(response)
@@ -371,12 +328,12 @@ class Resource(object):
         (`http_client.HTTPResponse`, `xml.etree.ElementTree.Element`) tuple
         resulting from a ``GET`` request to that URL."""
         response = cls.http_request(url)
-        if response.status != 200:
+        if response.status_code != 200:
             cls.raise_http_error(response)
 
-        assert response.getheader('Content-Type').startswith('application/xml')
+        # assert response.getheader('Content-Type').startswith('application/xml')
 
-        response_xml = response.read()
+        response_xml = response.content
         logging.getLogger('recurly.http.response').debug(response_xml)
         response_doc = ElementTree.fromstring(response_xml)
 
